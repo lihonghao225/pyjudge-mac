@@ -1,15 +1,4 @@
 #!/usr/bin/env python3
-"""
-PyJudge for macOS —— 全面优化版
-类似 Lemon / Arbiter 的简易评测系统
-
-依赖:
-    pip install PySide6
-    pip install psutil        # 强烈建议，用于 CPU 时间与内存峰值采样
-
-用法:
-    python3 pyjudge_mac.py
-"""
 
 import csv
 import hashlib
@@ -53,11 +42,7 @@ except ImportError:
     HAS_PSUTIL = False
 
 
-# ============================================================
-# 常量
-# ============================================================
-
-MAX_OUTPUT_BYTES = 16 * 1024 * 1024      # 单测试点输出上限
+MAX_OUTPUT_BYTES = 16 * 1024 * 1024
 MAX_PARALLEL = 16
 CXX = "clang++" if platform.system() == "Darwin" else "g++"
 CXX_STD = "-std=c++17"
@@ -82,10 +67,6 @@ def _natural_key(s: str):
             for t in re.split(r"(\d+)", s)]
 
 
-# ============================================================
-# 数据模型
-# ============================================================
-
 @dataclass
 class TestCase:
     input_file: Path
@@ -99,8 +80,8 @@ class Problem:
     name: str
     dir: Path
     cases: list[TestCase] = field(default_factory=list)
-    checker: Optional[Path] = None       # SPJ: checker.cpp
-    problem_type: str = "standard"       # standard / output_only
+    checker: Optional[Path] = None
+    problem_type: str = "standard"
 
     @classmethod
     def load(cls, problem_dir: Path) -> "Problem":
@@ -130,7 +111,6 @@ class Problem:
                     return p
             except Exception:
                 pass
-        # 自动扫描
         p = cls(name=problem_dir.name, dir=problem_dir)
         for inf in sorted(problem_dir.glob("*.in"),
                           key=lambda x: _natural_key(x.stem)):
@@ -178,10 +158,6 @@ class JudgeResult:
         return cls(cases=cases, **d)
 
 
-# ============================================================
-# 比较器
-# ============================================================
-
 def compare_output(expected: str, actual: str, mode: str,
                    float_eps: float = 1e-6) -> tuple[bool, str]:
     if mode == "ignore_all_whitespace":
@@ -221,7 +197,6 @@ def compare_output(expected: str, actual: str, mode: str,
 
 def run_checker(checker_exe: Path, input_path: Path, out_path: Path,
                 ans_path: Path, timeout: float = 10.0) -> tuple[bool, str]:
-    """SPJ：checker input output answer → 返回 (通过?, 说明)"""
     try:
         cp = subprocess.run(
             [str(checker_exe), str(input_path), str(out_path), str(ans_path)],
@@ -236,10 +211,6 @@ def run_checker(checker_exe: Path, input_path: Path, out_path: Path,
     return False, (cp.stderr or cp.stdout or "checker 返回非 0")[:500]
 
 
-# ============================================================
-# 评测线程
-# ============================================================
-
 class JudgeWorker(QThread):
     log = Signal(str, str)
     case_done = Signal(int, int, int, object)
@@ -250,7 +221,7 @@ class JudgeWorker(QThread):
                  work_dir, cache_dir, compare_mode="trailing_whitespace",
                  float_eps=1e-6, max_parallel=1):
         super().__init__()
-        self.tasks = tasks                      # [(ci, pi), ...]
+        self.tasks = tasks
         self.contestants = contestants
         self.problems = problems
         self.sources = sources
@@ -299,8 +270,6 @@ class JudgeWorker(QThread):
             self._log("INFO", "评测结束" if not self._stop else "评测已停止")
             self.all_done.emit()
 
-    # ---------- 单题 ----------
-
     def _judge_one(self, ci, pi, source, contestant, problem) -> JudgeResult:
         res = JudgeResult()
         res.total_score = 100.0
@@ -316,7 +285,6 @@ class JudgeWorker(QThread):
         if self._stop:
             return res
 
-        # 编译（带缓存）
         try:
             exe = self._compile_cached(source, contestant, problem)
         except CompileError as e:
@@ -327,7 +295,6 @@ class JudgeWorker(QThread):
             self._log("ERR", f"CE {contestant.name}/{problem.name}")
             return res
 
-        # SPJ
         checker_exe = None
         if problem.checker:
             try:
@@ -335,7 +302,6 @@ class JudgeWorker(QThread):
             except Exception as e:
                 self._log("WARN", f"checker 编译失败 {problem.name}: {e}")
 
-        # 逐点
         case_results = []
         exe_dir = self.work_dir / f"{contestant.name}_{problem.name}_{ci}_{pi}"
         exe_dir.mkdir(parents=True, exist_ok=True)
@@ -364,8 +330,6 @@ class JudgeWorker(QThread):
             res.status = "AC"
             res.message = "全部通过"
         return res
-
-    # ---------- 编译 ----------
 
     def _compile_cached(self, source: Path, contestant, problem) -> Path:
         key = sha1_file(source)
@@ -398,8 +362,6 @@ class JudgeWorker(QThread):
             raise RuntimeError(cp.stderr[-800:])
         exe.rename(cached)
         return cached
-
-    # ---------- 单测试点 ----------
 
     def _run_case(self, idx, exe, tc, work_dir, checker_exe) -> CaseResult:
         cr = CaseResult(index=idx)
@@ -456,7 +418,6 @@ class JudgeWorker(QThread):
         cr.memory_kb = peak_rss[0]
         cr.cpu_ms = cpu_total[0] * 1000
 
-        # 输出超限
         try:
             if out_path.stat().st_size >= MAX_OUTPUT_BYTES:
                 cr.status = "OLE"
@@ -486,7 +447,6 @@ class JudgeWorker(QThread):
                     pass
             return cr
 
-        # 判定
         if checker_exe:
             ok, why = run_checker(checker_exe, tc.input_file, out_path,
                                   tc.answer_file)
@@ -532,10 +492,6 @@ class CompileError(Exception):
         self.message = message
         super().__init__(message)
 
-
-# ============================================================
-# 详情对话框
-# ============================================================
 
 STATUS_COLORS = {
     "AC": "#c8e6c9", "WA": "#ffcdd2", "TLE": "#fff9c4",
@@ -601,10 +557,6 @@ class CaseDetailDialog(QDialog):
         layout.addWidget(btns)
 
 
-# ============================================================
-# 主窗口
-# ============================================================
-
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -630,8 +582,6 @@ class MainWindow(QMainWindow):
         self._build_statusbar()
         self._restore_state()
         self._load_results_snapshot()
-
-    # ---------- 菜单 ----------
 
     def _build_menu(self):
         mb = self.menuBar()
@@ -688,14 +638,11 @@ class MainWindow(QMainWindow):
             f"上次结果: {self.results_path}"
         )
 
-    # ---------- 界面 ----------
-
     def _build_ui(self):
         central = QWidget()
         self.setCentralWidget(central)
         root = QVBoxLayout(central)
 
-        # 顶部工具条
         bar = QHBoxLayout()
         for text, slot in [
             ("添加题目", self.add_problem),
@@ -727,10 +674,8 @@ class MainWindow(QMainWindow):
         bar.addStretch()
         root.addLayout(bar)
 
-        # 三栏
         splitter = QSplitter(Qt.Horizontal)
 
-        # 左：题目树
         left = QWidget(); ll = QVBoxLayout(left)
         ll.addWidget(QLabel("题目与测试点"))
         self.tree = QTreeWidget()
@@ -740,7 +685,6 @@ class MainWindow(QMainWindow):
         ll.addWidget(self.tree)
         splitter.addWidget(left)
 
-        # 中：结果
         mid = QWidget(); ml = QVBoxLayout(mid)
         top = QHBoxLayout()
         top.addWidget(QLabel("成绩表"))
@@ -756,7 +700,6 @@ class MainWindow(QMainWindow):
         ml.addWidget(self.table)
         splitter.addWidget(mid)
 
-        # 右：日志
         right = QWidget(); rl = QVBoxLayout(right)
         logbar = QHBoxLayout()
         logbar.addWidget(QLabel("日志"))
@@ -773,7 +716,7 @@ class MainWindow(QMainWindow):
         splitter.setSizes([300, 620, 400])
         root.addWidget(splitter, 1)
 
-        self._log_entries = []   # (level, text)
+        self._log_entries = []
 
     def _build_statusbar(self):
         self.status = QStatusBar()
@@ -782,8 +725,6 @@ class MainWindow(QMainWindow):
         self.progress.setMaximumWidth(220)
         self.status.addPermanentWidget(self.progress)
         self.status.showMessage("就绪")
-
-    # ---------- 状态持久化 ----------
 
     def _restore_state(self):
         geo = self.settings.value("geometry")
@@ -813,8 +754,6 @@ class MainWindow(QMainWindow):
         if self.problems:
             self.settings.setValue("last_problem_dir",
                                    str(self.problems[-1].dir))
-
-    # ---------- 结果快照 ----------
 
     def _save_results_snapshot(self):
         data = {
@@ -865,8 +804,6 @@ class MainWindow(QMainWindow):
         shutil.rmtree(self.cache_dir, ignore_errors=True)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._log("INFO", "编译缓存已清空")
-
-    # ---------- 题目 / 选手 ----------
 
     def add_problem(self):
         d = QFileDialog.getExistingDirectory(self, "选择题目的文件夹")
@@ -976,8 +913,6 @@ class MainWindow(QMainWindow):
             name = nfc(self.contestants[ci].name).lower()
             self.table.setRowHidden(ci, bool(text) and text not in name)
 
-    # ---------- 评测 ----------
-
     def start_judge(self, mode="all"):
         if self.worker and self.worker.isRunning():
             return
@@ -987,7 +922,6 @@ class MainWindow(QMainWindow):
 
         self._scan_sources()
 
-        # 构造任务
         if mode == "all":
             tasks = [(ci, pi)
                      for ci in range(len(self.contestants))
@@ -1085,8 +1019,6 @@ class MainWindow(QMainWindow):
                   f"{self.problems[col].name}", res)
         dlg.exec()
 
-    # ---------- 导出 ----------
-
     def export_csv(self):
         if not self.results:
             QMessageBox.information(self, "提示", "还没有结果。")
@@ -1119,8 +1051,6 @@ class MainWindow(QMainWindow):
         Path(path).write_text(
             "\n".join(t for _, t in self._log_entries), encoding="utf-8")
 
-    # ---------- 日志 ----------
-
     def _log(self, level, msg):
         self._log_entries.append((level, msg))
         self._append_log_html(level, msg)
@@ -1140,7 +1070,7 @@ class MainWindow(QMainWindow):
 
     def _level_pass(self, level):
         idx = self.cmb_level.currentIndex() if hasattr(self, "cmb_level") else 0
-        if idx == 1:   # WARN+
+        if idx == 1:
             return level in ("WARN", "ERR")
         if idx == 2:
             return level == "ERR"
@@ -1151,8 +1081,6 @@ class MainWindow(QMainWindow):
         for level, msg in self._log_entries:
             self._append_log_html(level, msg)
 
-    # ---------- 清理 ----------
-
     def closeEvent(self, event):
         self._save_state()
         self._save_results_snapshot()
@@ -1162,10 +1090,6 @@ class MainWindow(QMainWindow):
         shutil.rmtree(self.work_dir, ignore_errors=True)
         event.accept()
 
-
-# ============================================================
-# 入口
-# ============================================================
 
 def main():
     if sys.platform == "darwin":
